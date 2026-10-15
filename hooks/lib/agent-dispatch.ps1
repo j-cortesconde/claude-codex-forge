@@ -158,7 +158,17 @@ function Invoke-BoundProcess([string]$Executable, [string[]]$Arguments, [string]
     foreach ($key in $Environment.Keys) { $start.EnvironmentVariables[$key] = [string]$Environment[$key] }
     $process = New-Object Diagnostics.Process
     $process.StartInfo = $start
-    if (-not $process.Start()) { return @{ Exit = 127; Stdout = $stdout; Stderr = $stderr } }
+    try { $started = $process.Start() }
+    catch {
+        [IO.File]::WriteAllText($stdout, '', $Utf8)
+        [IO.File]::WriteAllText($stderr, $_.Exception.Message, $Utf8)
+        return @{ Exit = 127; Stdout = $stdout; Stderr = $stderr }
+    }
+    if (-not $started) {
+        [IO.File]::WriteAllText($stdout, '', $Utf8)
+        [IO.File]::WriteAllText($stderr, 'Process did not start', $Utf8)
+        return @{ Exit = 127; Stdout = $stdout; Stderr = $stderr }
+    }
     $stdoutTask = $process.StandardOutput.ReadToEndAsync()
     $stderrTask = $process.StandardError.ReadToEndAsync()
     if (-not $process.WaitForExit($Timeout * 1000)) {
@@ -314,7 +324,7 @@ function Invoke-FullInvestigation([string]$Selected, [string]$Executable, [strin
 function Invoke-Engine([string]$Selected) {
     if ($env:FORGE_DISPATCH_TEST_MODE -and $env:FORGE_TEST_DISABLE_ENGINE -eq $Selected) { return @{ Rc = 1; Class = 'engine'; Reason = 'binary-unavailable'; Engine = $Selected; Verdict = 'BLOCKED'; Severity = 'NONE'; Exit = 127 } }
     if ($env:FORGE_DISPATCH_TEST_MODE -and $env:FORGE_TEST_DISABLE_CAPABILITY -eq $Selected) { return @{ Rc = 1; Class = 'capability'; Reason = 'missing-required-capability'; Engine = $Selected; Verdict = 'BLOCKED'; Severity = 'NONE'; Exit = 127 } }
-    $command = Get-Command $Selected -ErrorAction SilentlyContinue
+    $command = Get-Command "$Selected.exe" -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
     if (-not $command) { return @{ Rc = 1; Class = 'engine'; Reason = 'binary-unavailable'; Engine = $Selected; Verdict = 'BLOCKED'; Severity = 'NONE'; Exit = 127 } }
     if (-not $env:FORGE_DISPATCH_TEST_MODE) {
         $help = (& $command.Source --help 2>&1) -join "`n"
@@ -423,7 +433,7 @@ function Invoke-Engine([string]$Selected) {
         $value = [Environment]::GetEnvironmentVariable($name)
         if ($null -ne $value) { $environment[$name] = $value }
     }
-    foreach ($name in @('FORGE_DISPATCH_TEST_MODE', 'FORGE_TEST_DISABLE_ENGINE', 'FAKE_CLAUDE_BEHAVIOR', 'FAKE_CODEX_BEHAVIOR', 'FAKE_CLAUDE_LOG', 'FAKE_CLAUDE_ARGV_LOG', 'FAKE_CODEX_LOG', 'FAKE_CHILD_PID_FILE')) {
+    foreach ($name in @('FORGE_DISPATCH_TEST_MODE', 'FORGE_TEST_DISABLE_ENGINE', 'FAKE_CLAUDE_BEHAVIOR', 'FAKE_CODEX_BEHAVIOR', 'FAKE_CLAUDE_LOG', 'FAKE_CLAUDE_ARGV_LOG', 'FAKE_CODEX_LOG', 'FAKE_CODEX_ARGV_LOG', 'FAKE_CHILD_PID_FILE')) {
         $value = [Environment]::GetEnvironmentVariable($name)
         if ($value) { $environment[$name] = $value }
     }
@@ -460,10 +470,10 @@ function Invoke-Engine([string]$Selected) {
         }
         $disabled = @('--disable', 'hooks', '--disable', 'plugins', '--disable', 'plugin_sharing', '--disable', 'apps', '--disable', 'remote_plugin', '--disable', 'in_app_browser', '--disable', 'browser_use', '--disable', 'computer_use')
         if ($Conversation -eq 'resume') {
-            $arguments = @('-a', 'never', '--sandbox', $sandbox, 'exec', 'resume') + $disabled + @('--ignore-user-config', '--ignore-rules', '--json', '-m', $model, '-c', "model_reasoning_effort=$effort", '-c', 'service_tier=fast', '--output-last-message', $bound, $SessionId, $prompt)
+            $arguments = @('-a', 'never', '--sandbox', $sandbox, 'exec', 'resume') + $disabled + @('--ignore-user-config', '--ignore-rules', '--json', '-m', $model, '-c', "model_reasoning_effort=$effort", '-c', 'service_tier=fast', '-c', 'windows.sandbox="elevated"', '--output-last-message', $bound, $SessionId, $prompt)
         }
         else {
-            $arguments = @('-a', 'never', 'exec') + $disabled + @('-C', $primary, '--add-dir', $snapshot, '--ignore-user-config', '--ignore-rules', '--sandbox', $sandbox, '-m', $model, '-c', "model_reasoning_effort=$effort", '-c', 'service_tier=fast', '--output-last-message', $bound)
+            $arguments = @('-a', 'never', 'exec') + $disabled + @('-C', $primary, '--add-dir', $snapshot, '--ignore-user-config', '--ignore-rules', '--sandbox', $sandbox, '-m', $model, '-c', "model_reasoning_effort=$effort", '-c', 'service_tier=fast', '-c', 'windows.sandbox="elevated"', '--output-last-message', $bound)
             if ($ReadOnlyServer -eq 'context7') { $arguments += @('-c', 'mcp_servers.context7.url=https://mcp.context7.com/mcp', '-c', 'mcp_servers.context7.read_only=true') }
             if ($Conversation -eq 'ephemeral') { $arguments += '--ephemeral' } else { $arguments += '--json' }
             $arguments += $prompt

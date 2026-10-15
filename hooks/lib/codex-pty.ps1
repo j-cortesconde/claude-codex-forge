@@ -46,7 +46,7 @@ function Invoke-CodexPty {
     }
 
     # codex availability check
-    $codex = Get-Command codex -ErrorAction SilentlyContinue
+    $codex = Get-Command codex.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
     if (-not $codex) {
         [Console]::Error.WriteLine("codex-pty: codex not found on PATH")
         [Console]::Error.WriteLine("codex-pty: install with 'npm i -g @openai/codex' or 'scoop install codex'")
@@ -55,7 +55,7 @@ function Invoke-CodexPty {
 
     # Bypass: skip shim logic entirely.
     if ($env:CLAUDE_FORGE_CODEX_PTY_BYPASS -eq '1') {
-        & codex @Args
+        & $codex.Source @Args
         return $LASTEXITCODE
     }
 
@@ -66,7 +66,7 @@ function Invoke-CodexPty {
     $inRedirected  = [Console]::IsInputRedirected
     if (-not $outRedirected -and -not $inRedirected -and
         $PSVersionTable.PSVersion.Major -ge 7) {
-        & codex @Args
+        & $codex.Source @Args
         return $LASTEXITCODE
     }
 
@@ -87,7 +87,7 @@ function Invoke-CodexPty {
     }
 
     if ($winpty) {
-        & $winpty.Source codex @Args
+        & $winpty.Source $codex.Source @Args
         return $LASTEXITCODE
     }
 
@@ -139,7 +139,7 @@ function Invoke-CodexPty {
     # Last-resort fallback: direct invoke with a stderr warning.
     [Console]::Error.WriteLine("codex-pty: winpty.exe not found and stdio is redirected; falling back to direct invoke (may hit openai/codex#19945)")
     [Console]::Error.WriteLine("codex-pty: install via 'scoop install winpty' or Git for Windows; or set `$env:CLAUDE_FORGE_CODEX_PTY_BYPASS='1' to silence")
-    & codex @Args
+    & $codex.Source @Args
     return $LASTEXITCODE
 }
 

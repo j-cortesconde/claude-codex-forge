@@ -162,7 +162,27 @@ public static class ForgeFakeEngine {
     Add-Type -TypeDefinition $source -Language CSharp -OutputAssembly (Join-Path $bin 'forge-fake.exe') -OutputType ConsoleApplication
     Copy-Item -LiteralPath (Join-Path $bin 'forge-fake.exe') -Destination (Join-Path $bin 'claude.exe')
     Copy-Item -LiteralPath (Join-Path $bin 'forge-fake.exe') -Destination (Join-Path $bin 'codex.exe')
+    [IO.File]::WriteAllText((Join-Path $bin 'codex.ps1'), 'throw "PowerShell shim must not be selected"')
     $env:PATH = "$bin;$($env:PATH)"; $env:FORGE_DISPATCH_TEST_MODE = '1'
+
+    Write-Host 'PowerShell native Codex selection and Windows read-only sandbox'
+    $repo = New-Repository 'native codex'; $argvLog = Join-Path $repo '.forge/local/reviews/codex-argv.log'; $env:FAKE_CODEX_ARGV_LOG = $argvLog; $env:FAKE_CODEX_BEHAVIOR = 'clean'
+    Assert-Equal (Invoke-Dispatch $repo 'claude' 'sid' 'codex' 'plan') 0 'Codex review launches the native executable ahead of the PowerShell shim'
+    if (Test-Path -LiteralPath $argvLog) {
+        $argv = @([IO.File]::ReadAllLines($argvLog))
+        Assert-True ($argv -contains '--sandbox' -and $argv -contains 'read-only') 'Codex reviewer remains read-only'
+        Assert-True ($argv -contains 'windows.sandbox="elevated"') 'Codex reviewer explicitly selects the Windows sandbox backend'
+    } else { Fail 'native Codex executable did not record argv' }
+    Remove-Item Env:FAKE_CODEX_ARGV_LOG -ErrorAction SilentlyContinue
+
+    $brokenBin = Join-Path $temporary 'broken native'; New-Item -ItemType Directory -Path $brokenBin | Out-Null
+    [IO.File]::WriteAllText((Join-Path $brokenBin 'codex.exe'), 'not a Windows executable')
+    $normalPath = $env:PATH; $env:PATH = "$brokenBin;$normalPath"
+    try {
+        $repo = New-Repository 'broken native'; $env:FAKE_CLAUDE_BEHAVIOR = 'clean'
+        Assert-Equal (Invoke-Dispatch $repo 'claude' 'sid' 'codex' 'plan') 0 'failed native process start uses the ordinary Claude fallback'
+        Assert-Equal (Get-ReceiptValue $repo 'fallback_reason') 'process-exit-127' 'failed native process start records a durable fallback reason'
+    } finally { $env:PATH = $normalPath }
 
     Write-Host 'PowerShell permission failures and timeouts preserve ordinary review access'
     foreach ($engineHost in @('claude', 'codex')) {

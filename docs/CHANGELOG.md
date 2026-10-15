@@ -2,6 +2,17 @@
 
 All notable changes to claude-codex-forge.
 
+## 6.4.12 — 2026-10-15
+
+### Restore Windows independent reviews
+
+PowerShell review dispatch, isolation qualification, setup capability checks, council preflight,
+and the Codex PTY launcher select native executables instead of npm PowerShell shims. A failed
+process start now reaches the ordinary fallback and receipt path. Codex review turns explicitly
+select the Windows elevated sandbox backend while retaining `read-only` access and isolated user
+configuration, so the reviewer can observe Forge's
+isolation canary on Windows. The same setting applies to ephemeral and council qualification turns.
+
 ## 6.4.11 — 2026-10-08
 
 ### Preserve MCP choices and reusable ADR scaffold

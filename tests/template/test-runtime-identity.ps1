@@ -109,7 +109,7 @@ Write-Output "{`"type`":`"turn.completed`",`"thread_id`":`"$env:FORGE_DISPATCH_S
         if ($engine -eq 'codex' -and ($investigationArgv -notmatch '-a on-request --search exec' -or $investigationArgv -notmatch '--sandbox danger-full-access')) { throw 'Codex investigation is missing full-capability on-request mode' }
         if ($engine -eq 'codex') {
             $reviewArgv = @($argv -split "`n" | Where-Object { $_ -and $_ -notmatch 'FORGE_INVESTIGATION|--help' })
-            if ($reviewArgv.Count -ne 3 -or @($reviewArgv | Where-Object { $_ -notmatch '--sandbox read-only' -or $_ -notmatch 'windows\.sandbox="elevated"' }).Count -ne 0) { throw 'Codex qualifier review turns must explicitly select the Windows read-only sandbox' }
+            if ($reviewArgv.Count -ne 3 -or @($reviewArgv | Where-Object { $_ -notmatch '--sandbox read-only' -or $_ -notmatch 'features\.prefer_mxc=true' -or $_ -notmatch 'windows\.sandbox="elevated"' }).Count -ne 0) { throw 'Codex qualifier review turns must prefer MXC with the Windows read-only sandbox' }
         }
         if ($engine -eq 'claude' -and ($investigationArgv -notmatch '--permission-mode auto' -or $investigationArgv -match '--sandbox')) { throw 'Claude investigation is missing safety-classified full-agent mode' }
     }

@@ -2,6 +2,16 @@
 
 All notable changes to claude-codex-forge.
 
+## 6.4.13 — 2026-10-19
+
+### Support Windows script-only reviewer launchers
+
+Windows review dispatch, council preflight, qualification, setup readiness, and the Codex PTY
+launcher now use a `.ps1` launcher when no native executable is available. The dispatcher runs it
+through PowerShell while preserving the original review arguments, exit status, bounded environment,
+timeout cleanup, isolation canary, and ordinary fallback receipt path. Codex reviews prefer MXC on
+compatible Windows hosts and place its required local profile under the isolated scratch directory.
+
 ## 6.4.12 — 2026-10-15
 
 ### Restore Windows independent reviews

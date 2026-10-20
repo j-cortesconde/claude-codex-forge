@@ -214,6 +214,8 @@ public static class ForgeFakeEngine {
             $argv = @([IO.File]::ReadAllLines($argvLog))
             Assert-True ($argv -contains 'windows.sandbox="elevated"') 'PowerShell launcher preserves the quoted sandbox configuration argument'
         } else { Fail 'PowerShell launcher did not reach Codex' }
+        $dispatcherSource = [IO.File]::ReadAllText($dispatcher)
+        Assert-True ($dispatcherSource.Contains("`$PSVersionTable.PSVersion -lt [Version]'7.3'")) 'PowerShell native argv repair covers 7.0 through 7.2 as well as Windows PowerShell 5.1'
         $withPwsh = $env:PATH
         try {
             $env:PATH = (@($withPwsh -split ';' | Where-Object { $_ -and -not (Test-Path -LiteralPath (Join-Path $_ 'pwsh.exe') -ErrorAction SilentlyContinue) }) -join ';')
@@ -225,6 +227,17 @@ public static class ForgeFakeEngine {
             Assert-True (([IO.File]::ReadAllLines($argvLog)) -contains 'windows.sandbox="elevated"') 'Windows PowerShell 5.1 preserves the quoted sandbox argument'
             Assert-True (([IO.File]::ReadAllText($argvLog)).Contains($quotedPrompt)) 'Windows PowerShell 5.1 preserves quoted review instructions'
         } finally { $env:PATH = $withPwsh }
+        $repo = New-Repository 'script handoff timeout'; $env:FORGE_TEST_SCRIPT_TIMEOUT = '2'; $env:FORGE_TEST_BLOCK_SCRIPT_HANDOFF = '45'
+        try {
+            $handoffTimer = [Diagnostics.Stopwatch]::StartNew()
+            Assert-Equal (Invoke-Dispatch $repo 'claude' 'sid' 'codex' 'plan' 'automatic' 'ephemeral' '' '' ('x' * 16384)) 0 'blocked script handoff uses ordinary fallback'
+            $handoffTimer.Stop()
+            Assert-Equal (Get-ReceiptValue $repo 'fallback_reason') 'timeout' 'blocked script handoff records the timeout'
+            Assert-True ($handoffTimer.Elapsed.TotalSeconds -lt 30) 'script handoff delivery is bounded by the review timeout'
+        } finally {
+            Remove-Item Env:FORGE_TEST_BLOCK_SCRIPT_HANDOFF -ErrorAction SilentlyContinue
+            $env:FORGE_TEST_SCRIPT_TIMEOUT = '30'
+        }
         $repo = New-Repository 'script only timeout'; $pidFile = Join-Path $repo '.forge/local/child.pid'
         $env:FORGE_TEST_SCRIPT_TIMEOUT = '4'; $env:FAKE_CODEX_BEHAVIOR = 'timeout'; $env:FAKE_CHILD_PID_FILE = $pidFile
         try {
@@ -238,6 +251,13 @@ public static class ForgeFakeEngine {
             $env:FORGE_TEST_SCRIPT_TIMEOUT = '30'; $env:FAKE_CODEX_BEHAVIOR = 'clean'
             Remove-Item Env:FAKE_CHILD_PID_FILE -ErrorAction SilentlyContinue
         }
+        $pty = Join-Path $root 'hooks/lib/codex-pty.ps1'
+        [IO.File]::WriteAllText((Join-Path $bin 'codex.ps1'), 'Write-Error "fixture nonterminating failure"')
+        $env:CLAUDE_FORGE_CODEX_PTY_BYPASS = '1'
+        try {
+            Assert-Equal (Invoke-SilentPowerShell @('-NoProfile','-ExecutionPolicy','Bypass','-File',$pty,'exec','--help')) 1 'script-only Codex bypass treats an unspecified exit status as failure'
+        } finally { Remove-Item Env:CLAUDE_FORGE_CODEX_PTY_BYPASS -ErrorAction SilentlyContinue }
+        Assert-Equal (Invoke-SilentPowerShell @('-NoProfile','-ExecutionPolicy','Bypass','-File',$pty,'exec','--help')) 1 'script-only Codex direct launch treats an unspecified exit status as failure'
     } finally {
         $env:PATH = $nativePath
         Remove-Item Env:FAKE_CODEX_ARGV_LOG -ErrorAction SilentlyContinue

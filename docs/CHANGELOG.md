@@ -2,6 +2,15 @@
 
 All notable changes to claude-codex-forge.
 
+## 6.4.14 — 2026-10-20
+
+### Harden Windows script-only reviewer launchers
+
+The Windows script bridge now bounds stdin handoff within the reviewer timeout and preserves
+fallback when a bridge does not read its payload. Its native argument repair also covers
+PowerShell 7.0 through 7.2. The Codex PTY helper now fails closed when a script-only launcher
+returns without an explicit native exit status.
+
 ## 6.4.13 — 2026-10-19
 
 ### Support Windows script-only reviewer launchers

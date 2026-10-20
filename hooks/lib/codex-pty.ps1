@@ -61,6 +61,9 @@ function Invoke-CodexPty {
 
     # Bypass: skip shim logic entirely.
     if ($env:CLAUDE_FORGE_CODEX_PTY_BYPASS -eq '1') {
+        # A PowerShell launcher can return after a nonterminating error without
+        # setting LASTEXITCODE. Seed failure so that cannot become false success.
+        if ($codex.CommandType -eq 'ExternalScript') { $global:LASTEXITCODE = 1 }
         & $codex.Source @Args
         return (Complete-CodexPty $LASTEXITCODE)
     }
@@ -68,6 +71,9 @@ function Invoke-CodexPty {
     # winpty accepts native applications, while a PowerShell launcher must be
     # invoked by PowerShell itself.
     if ($codex.CommandType -eq 'ExternalScript') {
+        # See the bypass path: script launchers need a nonzero default because
+        # they are not required to finish with an explicit native exit status.
+        $global:LASTEXITCODE = 1
         & $codex.Source @Args
         return (Complete-CodexPty $LASTEXITCODE)
     }

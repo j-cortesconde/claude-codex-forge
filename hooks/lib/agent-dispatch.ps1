@@ -154,10 +154,16 @@ function Invoke-BoundProcess([string]$Executable, [string[]]$Arguments, [string]
         $launchScript = @'
 $ErrorActionPreference = 'Stop'
 try {
+    if ($env:FORGE_DISPATCH_TEST_MODE -eq '1' -and $env:FORGE_TEST_BLOCK_SCRIPT_HANDOFF) {
+        Start-Sleep -Seconds ([int]$env:FORGE_TEST_BLOCK_SCRIPT_HANDOFF)
+    }
     $json = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String([Console]::In.ReadLine()))
     $payload = $json | ConvertFrom-Json
     $argv = [string[]]@($payload.arguments)
-    if ($PSVersionTable.PSVersion.Major -lt 7) {
+    # PowerShell 7.3 switched to the argument-passing behavior that preserves
+    # empty values and embedded quotes for native children. Keep repairing argv
+    # for Windows PowerShell 5.1 and PowerShell 7.0 through 7.2.
+    if ($PSVersionTable.PSVersion -lt [Version]'7.3') {
         for ($i = 0; $i -lt $argv.Length; $i++) {
             if ($argv[$i].Length -eq 0) { $argv[$i] = ([string][char]34 + [char]34) }
             else { $argv[$i] = [regex]::Replace($argv[$i], '(\\*)"', { param($m) (([string][char]92) * (2 * $m.Groups[1].Length + 1)) + [string][char]34 }) }
@@ -201,6 +207,7 @@ try {
     foreach ($key in $Environment.Keys) { $start.EnvironmentVariables[$key] = [string]$Environment[$key] }
     $process = New-Object Diagnostics.Process
     $process.StartInfo = $start
+    $timer = [Diagnostics.Stopwatch]::StartNew()
     try { $started = $process.Start() }
     catch {
         [IO.File]::WriteAllText($stdout, '', $Utf8)
@@ -212,10 +219,30 @@ try {
         [IO.File]::WriteAllText($stderr, 'Process did not start', $Utf8)
         return @{ Exit = 127; Stdout = $stdout; Stderr = $stderr }
     }
+    $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+    $stderrTask = $process.StandardError.ReadToEndAsync()
     if ($scriptLauncher) {
         try {
             $payload = @{ executable = $Executable; arguments = @($Arguments) } | ConvertTo-Json -Compress -Depth 3
-            $process.StandardInput.WriteLine([Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($payload)))
+            # AutoFlush makes WriteLineAsync's completion cover delivery to the
+            # bridge stdin pipe; do not let a non-reading bridge bypass Timeout.
+            $process.StandardInput.AutoFlush = $true
+            $handoff = $process.StandardInput.WriteLineAsync([Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($payload)))
+            $remaining = [Math]::Max(0, ($Timeout * 1000) - [int]$timer.ElapsedMilliseconds)
+            if (-not $handoff.Wait($remaining)) {
+                # An incomplete line means the bridge cannot have parsed the
+                # payload or started its reviewer child. Kill only the bridge
+                # here; synchronous taskkill and an unbounded WaitForExit would
+                # let a blocked handoff exceed the caller's timeout again.
+                try { $process.Kill() } catch {}
+                $process.WaitForExit(1000) | Out-Null
+                $stdoutText = if ($stdoutTask.Wait(1000)) { $stdoutTask.Result } else { '' }
+                $stderrText = if ($stderrTask.Wait(1000)) { $stderrTask.Result } else { '' }
+                [IO.File]::WriteAllText($stdout, $stdoutText, $Utf8)
+                [IO.File]::WriteAllText($stderr, $stderrText, $Utf8)
+                return @{ Exit = 124; Stdout = $stdout; Stderr = $stderr }
+            }
+            $handoff.GetAwaiter().GetResult()
             $process.StandardInput.Close()
         }
         catch {
@@ -225,9 +252,8 @@ try {
             return @{ Exit = 127; Stdout = $stdout; Stderr = $stderr }
         }
     }
-    $stdoutTask = $process.StandardOutput.ReadToEndAsync()
-    $stderrTask = $process.StandardError.ReadToEndAsync()
-    if (-not $process.WaitForExit($Timeout * 1000)) {
+    $remaining = [Math]::Max(0, ($Timeout * 1000) - [int]$timer.ElapsedMilliseconds)
+    if (-not $process.WaitForExit($remaining)) {
         try { & taskkill.exe /PID $process.Id /T /F 2>$null | Out-Null } catch {}
         try { $process.Kill() } catch {}
         $process.WaitForExit()
@@ -490,7 +516,7 @@ function Invoke-Engine([string]$Selected) {
         $value = [Environment]::GetEnvironmentVariable($name)
         if ($null -ne $value) { $environment[$name] = $value }
     }
-    foreach ($name in @('FORGE_DISPATCH_TEST_MODE', 'FORGE_TEST_DISABLE_ENGINE', 'FAKE_CLAUDE_BEHAVIOR', 'FAKE_CODEX_BEHAVIOR', 'FAKE_CLAUDE_LOG', 'FAKE_CLAUDE_ARGV_LOG', 'FAKE_CODEX_LOG', 'FAKE_CODEX_ARGV_LOG', 'FAKE_CHILD_PID_FILE')) {
+    foreach ($name in @('FORGE_DISPATCH_TEST_MODE', 'FORGE_TEST_DISABLE_ENGINE', 'FORGE_TEST_BLOCK_SCRIPT_HANDOFF', 'FAKE_CLAUDE_BEHAVIOR', 'FAKE_CODEX_BEHAVIOR', 'FAKE_CLAUDE_LOG', 'FAKE_CLAUDE_ARGV_LOG', 'FAKE_CODEX_LOG', 'FAKE_CODEX_ARGV_LOG', 'FAKE_CHILD_PID_FILE')) {
         $value = [Environment]::GetEnvironmentVariable($name)
         if ($value) { $environment[$name] = $value }
     }
